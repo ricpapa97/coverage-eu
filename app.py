@@ -422,21 +422,43 @@ def main():
 
                     st.success(f"Done in {elapsed:.1f}s")
                     st.markdown("### Results")
-                    mc1, mc2, mc3 = st.columns(3)
+                    mc1, mc2, mc3, mc4 = st.columns(4)
                     mc1.metric("Total Stores", f"{n_stores:,}")
                     mc2.metric("Essential", f"{n_essential:,}")
                     mc3.metric("Removable", f"{n_removable:,}")
-                    st.caption(f"Baseline coverage: {baseline_pct:.1f}% — "
-                               f"Removing {n_removable:,} stores has zero impact on coverage.")
+                    mc4.metric("Coverage (with rules)", f"{baseline_pct:.1f}%")
+                    st.caption(f"Coverage computed using your rules → {baseline_pct:.1f}% of customers reached. "
+                               f"Removing {n_removable:,} stores has zero impact on this coverage.")
+
+                    # Build essential list
+                    essential_list = []
+                    for s in range(n_stores):
+                        if s in essential_stores:
+                            essential_list.append({
+                                "store_id": stores.iloc[s].get("store_id", f"store_{s}"),
+                                "carrier": stores.iloc[s].get("carrier", ""),
+                                "lat": stores.iloc[s]["lat"],
+                                "lon": stores.iloc[s]["lon"],
+                            })
+                    essential_df = pd.DataFrame(essential_list) if essential_list else pd.DataFrame()
 
                     if removed_order:
                         removed_df = pd.DataFrame(removed_order)
                         st.markdown("### Removable Stores")
+                        st.caption(f"{n_removable:,} stores that can be removed with zero coverage loss.")
                         st.dataframe(removed_df, use_container_width=True, hide_index=True)
-                        st.download_button("📥 Download Removable Stores (Excel)",
-                            data=make_excel({"Removable": removed_df}),
-                            file_name=f"rationalize_{country}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    else:
+                        removed_df = pd.DataFrame()
+
+                    if not essential_df.empty:
+                        st.markdown("### Essential Stores")
+                        st.caption(f"{n_essential:,} stores that are critical — removing any would reduce coverage.")
+                        st.dataframe(essential_df, use_container_width=True, hide_index=True)
+
+                    st.download_button("📥 Download Results (Excel)",
+                        data=make_excel({"Removable": removed_df, "Essential": essential_df}),
+                        file_name=f"rationalize_{country}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
     # ═══════════ ANALYSIS 3: BEST STORES TO ADD ═══════════
