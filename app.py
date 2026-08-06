@@ -355,51 +355,51 @@ def main():
             if st.button("✂️ Rationalize Network", type="primary", key="a5_run"):
                 with st.spinner("Computing..."):
                     t0 = time.time()
-                    grid_rad = np.radians(grid_df[["lat", "lon"]].to_numpy(np.float64))
-                    weights = grid_df["weight"].to_numpy(np.int64)
-                    cats = grid_df["category"].to_numpy()
-                    total = int(weights.sum())
+                    grid_rad_full = np.radians(grid_df[["lat", "lon"]].to_numpy(np.float64))
+                    weights_full = grid_df["weight"].to_numpy(np.int64)
+                    cats_full = grid_df["category"].to_numpy()
+                    total_full = int(weights_full.sum())
                     n_stores = len(stores)
 
-                    # Build per-cell radius
-                    cell_radius_km = np.zeros(len(grid_df), np.float64)
+                    # Build per-cell radius (full grid)
+                    cell_radius_km_full = np.zeros(len(grid_df), np.float64)
                     for cr in criteria:
                         r_km = cr["radius_m"] / 1000.0
                         if cr["category"] is None:
-                            cell_radius_km = np.maximum(cell_radius_km, r_km)
+                            cell_radius_km_full = np.maximum(cell_radius_km_full, r_km)
                         else:
-                            mask = cats == cr["category"]
-                            cell_radius_km[mask] = np.maximum(cell_radius_km[mask], r_km)
+                            mask = cats_full == cr["category"]
+                            cell_radius_km_full[mask] = np.maximum(cell_radius_km_full[mask], r_km)
 
-                    # Sample grid for speed
+                    # Compute distances on FULL grid (for coverage display)
+                    store_coords = np.radians(stores[["lat", "lon"]].to_numpy(np.float64))
+                    all_tree = BallTree(store_coords, metric="haversine")
+                    all_d_full, _ = all_tree.query(grid_rad_full, k=1)
+                    all_km_full = all_d_full[:, 0] * EARTH_RADIUS_KM
+
+                    # Sample grid for k=2 rationalization (speed)
                     MAX_CELLS = 300_000
                     if len(grid_df) > MAX_CELLS:
                         np.random.seed(42)
                         idx = np.random.choice(len(grid_df), MAX_CELLS, replace=False,
-                            p=weights.astype(np.float64) / weights.sum())
-                        grid_rad = grid_rad[idx]
-                        weights = weights[idx]
-                        cats = cats[idx]
-                        cell_radius_km = cell_radius_km[idx]
-                        total = int(weights.sum())
+                            p=weights_full.astype(np.float64) / weights_full.sum())
+                        grid_rad_s = grid_rad_full[idx]
+                        weights_s = weights_full[idx]
+                        cell_radius_km_s = cell_radius_km_full[idx]
+                    else:
+                        grid_rad_s = grid_rad_full
+                        weights_s = weights_full
+                        cell_radius_km_s = cell_radius_km_full
 
-                    # Baseline
-                    store_coords = np.radians(stores[["lat", "lon"]].to_numpy(np.float64))
-                    all_tree = BallTree(store_coords, metric="haversine")
-                    all_d, _ = all_tree.query(grid_rad, k=1)
-                    all_km = all_d[:, 0] * EARTH_RADIUS_KM
-                    baseline_covered = all_km <= cell_radius_km
-                    baseline_cov_w = int(weights[baseline_covered].sum())
-                    baseline_pct = baseline_cov_w / total * 100.0
-
-
-                    # K=2 approach
-                    all_d2, all_idx2 = all_tree.query(grid_rad, k=min(2, n_stores))
+                    # K=2 on sampled grid for rationalization
+                    all_d2, all_idx2 = all_tree.query(grid_rad_s, k=min(2, n_stores))
                     nearest_store = all_idx2[:, 0]
-                    second_km = all_d2[:, 1] * EARTH_RADIUS_KM if n_stores > 1 else np.full(len(grid_rad), np.inf)
+                    d1_km_s = all_d2[:, 0] * EARTH_RADIUS_KM
+                    second_km = all_d2[:, 1] * EARTH_RADIUS_KM if n_stores > 1 else np.full(len(grid_rad_s), np.inf)
+                    baseline_covered_s = d1_km_s <= cell_radius_km_s
 
                     # Find essential stores (vectorized)
-                    at_risk_mask = baseline_covered & (second_km > cell_radius_km)
+                    at_risk_mask = baseline_covered_s & (second_km > cell_radius_km_s)
                     essential_stores = set(nearest_store[at_risk_mask].tolist())
 
                     # Build removed list
@@ -422,19 +422,19 @@ def main():
 
                     st.success(f"Done in {elapsed:.1f}s")
 
-                    # Coverage per radius
+                    # Coverage per radius (on FULL grid — same as Coverage tool)
                     st.markdown("### Coverage by Radius")
                     cov_rows = []
                     for cr in criteria:
                         r_km = cr["radius_m"] / 1000.0
                         cat_label = cr["category"] if cr["category"] else "All"
                         if cr["category"] is None:
-                            m = all_km <= r_km
+                            m = all_km_full <= r_km
+                            cat_total = total_full
                         else:
-                            m = (all_km <= r_km) & (cats == cr["category"])
-                            # Show % of that category
-                        cat_total = int(weights[cats == cr["category"]].sum()) if cr["category"] else total
-                        cov_w = int(weights[m].sum())
+                            m = (all_km_full <= r_km) & (cats_full == cr["category"])
+                            cat_total = int(weights_full[cats_full == cr["category"]].sum())
+                        cov_w = int(weights_full[m].sum())
                         cov_rows.append({
                             "Radius": f"{cr['radius_m']}m",
                             "Category": cat_label,
