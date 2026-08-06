@@ -425,24 +425,33 @@ def main():
                     # Coverage per radius (on FULL grid — same as Coverage tool)
                     st.markdown("### Coverage by Radius")
                     cov_rows = []
-                    for cr in criteria:
-                        r_km = cr["radius_m"] / 1000.0
-                        cat_label = cr["category"] if cr["category"] else "All"
-                        if cr["category"] is None:
-                            m = all_km_full <= r_km
-                            cat_total = total_full
-                        else:
-                            m = (all_km_full <= r_km) & (cats_full == cr["category"])
-                            cat_total = int(weights_full[cats_full == cr["category"]].sum())
+                    unique_radii = sorted(set(cr["radius_m"] for cr in criteria))
+                    for r_m in unique_radii:
+                        r_km = r_m / 1000.0
+                        m = all_km_full <= r_km
                         cov_w = int(weights_full[m].sum())
                         cov_rows.append({
-                            "Radius": f"{cr['radius_m']}m",
-                            "Category": cat_label,
-                            "Covered": f"{cov_w:,}",
-                            "Total": f"{cat_total:,}",
-                            "Coverage %": f"{cov_w / cat_total * 100:.1f}%" if cat_total > 0 else "0%",
+                            "Radius": f"0-{r_m}m",
+                            "Coverage %": round(cov_w / total_full * 100, 2),
                         })
                     st.dataframe(pd.DataFrame(cov_rows), use_container_width=True, hide_index=True)
+
+                    # By category at each radius
+                    st.markdown("### Coverage by Category")
+                    cat_rows = []
+                    for cat in ["Urban", "Suburban", "Rural"]:
+                        cm = cats_full == cat
+                        cat_tot = int(weights_full[cm].sum())
+                        if cat_tot == 0:
+                            continue
+                        row = {"category": cat}
+                        for r_m in unique_radii:
+                            r_km = r_m / 1000.0
+                            cov = int(weights_full[cm & (all_km_full <= r_km)].sum())
+                            row[f"{r_m}m"] = round(cov / cat_tot * 100, 2)
+                        cat_rows.append(row)
+                    if cat_rows:
+                        st.dataframe(pd.DataFrame(cat_rows), use_container_width=True, hide_index=True)
 
                     st.markdown("### Rationalization")
                     mc1, mc2, mc3 = st.columns(3)
