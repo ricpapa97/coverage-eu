@@ -370,80 +370,40 @@ def main():
                     # Compute distances on FULL grid (for coverage display)
                     store_coords = np.radians(stores[["lat", "lon"]].to_numpy(np.float64))
                     all_tree = BallTree(store_coords, metric="haversine")
-                    all_d_full, _ = all_tree.query(grid_rad_full, k=1)
+                    all_d_full, idx_full = all_tree.query(grid_rad_full, k=1)
                     all_km_full = all_d_full[:, 0] * EARTH_RADIUS_KM
-
-                    # Find essential stores: use query_radius per cell's radius
-                    # For each covered cell, count how many stores are within its radius.
-                    # If count==1, that store is essential.
-                    max_radius_km = cell_radius_km_full.max()
+                    nearest_idx_full = idx_full[:, 0]
 
                     # For cells that are covered (nearest store within their radius)
                     covered_full = all_km_full <= cell_radius_km_full
-                    nearest_idx_full = all_tree.query(grid_rad_full, k=1)[1][:, 0]
 
-                    # Group cells by their radius to do batch query_radius
+                    # Find essential stores using query_radius (exact)
                     essential_stores = set()
                     unique_radii_km = np.unique(cell_radius_km_full[covered_full])
                     for r_km in unique_radii_km:
                         r_rad = r_km / EARTH_RADIUS_KM
-                        # Cells with this radius that are covered
                         cell_mask = covered_full & (cell_radius_km_full == r_km)
                         if not cell_mask.any():
                             continue
                         cell_coords = grid_rad_full[cell_mask]
-                        # Count stores within radius for these cells
                         counts = all_tree.query_radius(cell_coords, r=r_rad, count_only=True)
-                        # Cells with only 1 store within radius → that store is essential
                         single_mask = counts == 1
                         if single_mask.any():
-                            # Get which store covers these single-coverage cells
                             single_store_ids = nearest_idx_full[cell_mask][single_mask]
                             essential_stores.update(single_store_ids.tolist())
 
-                    # VALIDATION: verify that essential-only set still covers everything
-                    # If not, iteratively add back the store that covers the most lost cells
-                    essential_coords = np.radians(stores.iloc[list(essential_stores)][["lat", "lon"]].to_numpy(np.float64))
-                    ess_tree = BallTree(essential_coords, metric="haversine")
+                    # VALIDATION: check essential-only coverage matches full coverage
+                    # For any cell that loses coverage, add its nearest store (from full list)
+                    ess_list = sorted(essential_stores)
+                    ess_coords = store_coords[ess_list]
+                    ess_tree = BallTree(ess_coords, metric="haversine")
                     ess_d, _ = ess_tree.query(grid_rad_full, k=1)
                     ess_km = ess_d[:, 0] * EARTH_RADIUS_KM
-                    ess_covered = ess_km <= cell_radius_km_full
-
-                    # Find cells that were covered before but lost coverage
-                    lost = covered_full & ~ess_covered
+                    lost = covered_full & (ess_km > cell_radius_km_full)
                     if lost.any():
-                        # Add back stores to cover lost cells
-                        lost_coords = grid_rad_full[lost]
-                        lost_radii = cell_radius_km_full[lost]
-                        lost_weights = weights_full[lost]
-                        remaining_candidates = [s for s in range(n_stores) if s not in essential_stores]
-                        while lost.any() and remaining_candidates:
-                            best_s, best_count = -1, 0
-                            for s in remaining_candidates:
-                                s_coord = store_coords[s:s+1]
-                                d_to_lost = BallTree(s_coord, metric="haversine").query(
-                                    lost_coords, k=1)[0][:, 0] * EARTH_RADIUS_KM
-                                covers = d_to_lost <= lost_radii
-                                count = int(lost_weights[covers].sum())
-                                if count > best_count:
-                                    best_count = count
-                                    best_s = s
-                            if best_s == -1 or best_count == 0:
-                                break
-                            essential_stores.add(best_s)
-                            remaining_candidates.remove(best_s)
-                            # Recompute lost cells
-                            essential_coords = np.radians(stores.iloc[list(essential_stores)][["lat", "lon"]].to_numpy(np.float64))
-                            ess_tree = BallTree(essential_coords, metric="haversine")
-                            ess_d, _ = ess_tree.query(grid_rad_full, k=1)
-                            ess_km = ess_d[:, 0] * EARTH_RADIUS_KM
-                            ess_covered = ess_km <= cell_radius_km_full
-                            lost = covered_full & ~ess_covered
-                            if not lost.any():
-                                break
-                            lost_coords = grid_rad_full[lost]
-                            lost_radii = cell_radius_km_full[lost]
-                            lost_weights = weights_full[lost]
+                        # Add the nearest store (from full list) for each lost cell
+                        lost_stores = nearest_idx_full[lost]
+                        essential_stores.update(lost_stores.tolist())
 
                     # Build removed list
                     removed_order = []
