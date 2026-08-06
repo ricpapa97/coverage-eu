@@ -284,60 +284,56 @@ def main():
             if st.button("🚀 Calculate Coverage", type="primary", key="a1_run"):
                 with st.spinner("Computing coverage..."):
                     t0 = time.time()
-                    res = compute_coverage(grid_df, stores, radii)
-                    dist_km = res["dist_km"]
-                    weights = res["weights"]
-                    categories = res["categories"]
-                    total_w = res["total_w"]
+                    # Compute nearest-store distance for each grid cell
+                    grid_coords = np.radians(grid_df[["lat", "lon"]].to_numpy(np.float64))
+                    store_coords = np.radians(stores[["lat", "lon"]].to_numpy(np.float64))
+                    store_tree = BallTree(store_coords, metric="haversine")
+                    d, _ = store_tree.query(grid_coords, k=1)
+                    dist_km = d[:, 0] * EARTH_RADIUS_KM
+                    weights = grid_df["weight"].to_numpy(np.int64)
+                    categories = grid_df["category"].to_numpy()
+                    total_w = int(weights.sum())
 
-                    # Coverage by rule
-                    covered_mask = np.zeros(len(grid_df), dtype=bool)
+                    # Coverage per rule
                     rule_rows = []
+                    covered_mask = np.zeros(len(grid_df), dtype=bool)
                     for cr in criteria:
                         r_km = cr["radius_m"] / 1000.0
+                        cat_label = cr["category"] if cr["category"] else "All"
                         if cr["category"] is None:
                             mask = dist_km <= r_km
+                            denom = total_w
                         else:
                             mask = (dist_km <= r_km) & (categories == cr["category"])
+                            denom = int(weights[categories == cr["category"]].sum())
                         covered_mask |= mask
                         cov = int(weights[mask].sum())
-                        cat_label = cr["category"] if cr["category"] else "All"
-                        rule_rows.append({"Rule": f"{cr['radius_m']}m for {cat_label}",
-                                          "% Covered": f"{cov/total_w*100:.1f}%"})
+                        rule_rows.append({
+                            "Radius": f"{cr['radius_m']}m",
+                            "Category": cat_label,
+                            "Covered": f"{cov:,}",
+                            "Total": f"{denom:,}",
+                            "Coverage %": round(cov / denom * 100, 2) if denom > 0 else 0,
+                        })
                     total_covered = int(weights[covered_mask].sum())
                     not_covered = total_w - total_covered
-                    rule_rows.append({"Rule": "COMBINED",
-                                      "% Covered": f"{total_covered/total_w*100:.1f}%"})
+                    rule_rows.append({
+                        "Radius": "COMBINED",
+                        "Category": "All",
+                        "Covered": f"{total_covered:,}",
+                        "Total": f"{total_w:,}",
+                        "Coverage %": round(total_covered / total_w * 100, 2),
+                    })
 
                     elapsed = time.time() - t0
                     st.success(f"Done in {elapsed:.1f}s")
-
-                    # Display
-                    st.markdown("### Overall Coverage")
-                    st.dataframe(res["country"][["range", "coverage_pct"]].rename(
-                        columns={"range": "Radius", "coverage_pct": "Coverage %"}),
-                        use_container_width=True, hide_index=True)
-
-                    st.markdown("### Coverage by Category")
-                    cat_df = res["by_category"]
-                    if not cat_df.empty:
-                        pivot = cat_df.pivot_table(index="category", columns="radius_m",
-                                                  values="coverage_pct", aggfunc="first")
-                        pivot.columns = [f"{int(c)}m" for c in pivot.columns]
-                        st.dataframe(pivot, use_container_width=True)
-
-                    st.markdown("### Coverage by Rule")
+                    st.markdown("### Coverage")
                     st.dataframe(pd.DataFrame(rule_rows), use_container_width=True, hide_index=True)
-
                     mc1, mc2 = st.columns(2)
                     mc1.metric("Coverage %", f"{total_covered/total_w*100:.1f}%")
                     mc2.metric("Not Covered", f"{not_covered:,} ({not_covered/total_w*100:.1f}%)")
-
-                    # Download
                     st.download_button("📥 Download Results (Excel)",
-                        data=make_excel({"Overall": res["country"],
-                                         "By_Category": cat_df,
-                                         "By_Rule": pd.DataFrame(rule_rows)}),
+                        data=make_excel({"Coverage": pd.DataFrame(rule_rows)}),
                         file_name=f"coverage_{country}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -422,36 +418,37 @@ def main():
 
                     st.success(f"Done in {elapsed:.1f}s")
 
-                    # Coverage per radius (on FULL grid — same as Coverage tool)
-                    st.markdown("### Coverage by Radius")
-                    cov_rows = []
-                    unique_radii = sorted(set(cr["radius_m"] for cr in criteria))
-                    for r_m in unique_radii:
-                        r_km = r_m / 1000.0
-                        m = all_km_full <= r_km
-                        cov_w = int(weights_full[m].sum())
-                        cov_rows.append({
-                            "Radius": f"0-{r_m}m",
-                            "Coverage %": round(cov_w / total_full * 100, 2),
+                    # Coverage per rule (SAME logic as Coverage tool — full grid)
+                    st.markdown("### Coverage")
+                    rule_rows = []
+                    covered_mask_full = np.zeros(len(grid_df), dtype=bool)
+                    for cr in criteria:
+                        r_km = cr["radius_m"] / 1000.0
+                        cat_label = cr["category"] if cr["category"] else "All"
+                        if cr["category"] is None:
+                            mask = all_km_full <= r_km
+                            denom = total_full
+                        else:
+                            mask = (all_km_full <= r_km) & (cats_full == cr["category"])
+                            denom = int(weights_full[cats_full == cr["category"]].sum())
+                        covered_mask_full |= mask
+                        cov = int(weights_full[mask].sum())
+                        rule_rows.append({
+                            "Radius": f"{cr['radius_m']}m",
+                            "Category": cat_label,
+                            "Covered": f"{cov:,}",
+                            "Total": f"{denom:,}",
+                            "Coverage %": round(cov / denom * 100, 2) if denom > 0 else 0,
                         })
-                    st.dataframe(pd.DataFrame(cov_rows), use_container_width=True, hide_index=True)
-
-                    # By category at each radius
-                    st.markdown("### Coverage by Category")
-                    cat_rows = []
-                    for cat in ["Urban", "Suburban", "Rural"]:
-                        cm = cats_full == cat
-                        cat_tot = int(weights_full[cm].sum())
-                        if cat_tot == 0:
-                            continue
-                        row = {"category": cat}
-                        for r_m in unique_radii:
-                            r_km = r_m / 1000.0
-                            cov = int(weights_full[cm & (all_km_full <= r_km)].sum())
-                            row[f"{r_m}m"] = round(cov / cat_tot * 100, 2)
-                        cat_rows.append(row)
-                    if cat_rows:
-                        st.dataframe(pd.DataFrame(cat_rows), use_container_width=True, hide_index=True)
+                    total_covered_full = int(weights_full[covered_mask_full].sum())
+                    rule_rows.append({
+                        "Radius": "COMBINED",
+                        "Category": "All",
+                        "Covered": f"{total_covered_full:,}",
+                        "Total": f"{total_full:,}",
+                        "Coverage %": round(total_covered_full / total_full * 100, 2),
+                    })
+                    st.dataframe(pd.DataFrame(rule_rows), use_container_width=True, hide_index=True)
 
                     st.markdown("### Rationalization")
                     mc1, mc2, mc3 = st.columns(3)
