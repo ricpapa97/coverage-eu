@@ -373,30 +373,35 @@ def main():
                     all_d_full, _ = all_tree.query(grid_rad_full, k=1)
                     all_km_full = all_d_full[:, 0] * EARTH_RADIUS_KM
 
-                    # Sample grid for k=2 rationalization (speed)
-                    MAX_CELLS = 300_000
-                    if len(grid_df) > MAX_CELLS:
-                        np.random.seed(42)
-                        idx = np.random.choice(len(grid_df), MAX_CELLS, replace=False,
-                            p=weights_full.astype(np.float64) / weights_full.sum())
-                        grid_rad_s = grid_rad_full[idx]
-                        weights_s = weights_full[idx]
-                        cell_radius_km_s = cell_radius_km_full[idx]
-                    else:
-                        grid_rad_s = grid_rad_full
-                        weights_s = weights_full
-                        cell_radius_km_s = cell_radius_km_full
+                    # Find essential stores: use query_radius per cell's radius
+                    # For each covered cell, count how many stores are within its radius.
+                    # If count==1, that store is essential.
+                    # To handle variable radius per cell, we group by unique radius values.
+                    max_radius_km = cell_radius_km_full.max()
+                    max_radius_rad = max_radius_km / EARTH_RADIUS_KM
 
-                    # K=2 on sampled grid for rationalization
-                    all_d2, all_idx2 = all_tree.query(grid_rad_s, k=min(2, n_stores))
-                    nearest_store = all_idx2[:, 0]
-                    d1_km_s = all_d2[:, 0] * EARTH_RADIUS_KM
-                    second_km = all_d2[:, 1] * EARTH_RADIUS_KM if n_stores > 1 else np.full(len(grid_rad_s), np.inf)
-                    baseline_covered_s = d1_km_s <= cell_radius_km_s
+                    # For cells that are covered (nearest store within their radius)
+                    covered_full = all_km_full <= cell_radius_km_full
+                    nearest_idx_full = all_tree.query(grid_rad_full, k=1)[1][:, 0]
 
-                    # Find essential stores (vectorized)
-                    at_risk_mask = baseline_covered_s & (second_km > cell_radius_km_s)
-                    essential_stores = set(nearest_store[at_risk_mask].tolist())
+                    # Group cells by their radius to do batch query_radius
+                    essential_stores = set()
+                    unique_radii_km = np.unique(cell_radius_km_full[covered_full])
+                    for r_km in unique_radii_km:
+                        r_rad = r_km / EARTH_RADIUS_KM
+                        # Cells with this radius that are covered
+                        cell_mask = covered_full & (cell_radius_km_full == r_km)
+                        if not cell_mask.any():
+                            continue
+                        cell_coords = grid_rad_full[cell_mask]
+                        # Count stores within radius for these cells
+                        counts = all_tree.query_radius(cell_coords, r=r_rad, count_only=True)
+                        # Cells with only 1 store within radius → that store is essential
+                        single_mask = counts == 1
+                        if single_mask.any():
+                            # Get which store covers these single-coverage cells
+                            single_store_ids = nearest_idx_full[cell_mask][single_mask]
+                            essential_stores.update(single_store_ids.tolist())
 
                     # Build removed list
                     removed_order = []
