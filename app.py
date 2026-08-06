@@ -421,14 +421,35 @@ def main():
                     n_removable = n_stores - n_essential
 
                     st.success(f"Done in {elapsed:.1f}s")
-                    st.markdown("### Results")
-                    mc1, mc2, mc3, mc4 = st.columns(4)
+
+                    # Coverage per radius
+                    st.markdown("### Coverage by Radius")
+                    cov_rows = []
+                    for cr in criteria:
+                        r_km = cr["radius_m"] / 1000.0
+                        cat_label = cr["category"] if cr["category"] else "All"
+                        if cr["category"] is None:
+                            m = all_km <= r_km
+                        else:
+                            m = (all_km <= r_km) & (cats == cr["category"])
+                            # Show % of that category
+                        cat_total = int(weights[cats == cr["category"]].sum()) if cr["category"] else total
+                        cov_w = int(weights[m].sum())
+                        cov_rows.append({
+                            "Radius": f"{cr['radius_m']}m",
+                            "Category": cat_label,
+                            "Covered": f"{cov_w:,}",
+                            "Total": f"{cat_total:,}",
+                            "Coverage %": f"{cov_w / cat_total * 100:.1f}%" if cat_total > 0 else "0%",
+                        })
+                    st.dataframe(pd.DataFrame(cov_rows), use_container_width=True, hide_index=True)
+
+                    st.markdown("### Rationalization")
+                    mc1, mc2, mc3 = st.columns(3)
                     mc1.metric("Total Stores", f"{n_stores:,}")
                     mc2.metric("Essential", f"{n_essential:,}")
                     mc3.metric("Removable", f"{n_removable:,}")
-                    mc4.metric("Coverage (with rules)", f"{baseline_pct:.1f}%")
-                    st.caption(f"Coverage computed using your rules → {baseline_pct:.1f}% of customers reached. "
-                               f"Removing {n_removable:,} stores has zero impact on this coverage.")
+                    st.caption(f"Removing {n_removable:,} stores has zero impact on coverage.")
 
                     # Build essential list
                     essential_list = []
