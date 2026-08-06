@@ -296,7 +296,6 @@ def main():
 
                     # Coverage per rule
                     rule_rows = []
-                    covered_mask = np.zeros(len(grid_df), dtype=bool)
                     for cr in criteria:
                         r_km = cr["radius_m"] / 1000.0
                         cat_label = cr["category"] if cr["category"] else "All"
@@ -306,7 +305,6 @@ def main():
                         else:
                             mask = (dist_km <= r_km) & (categories == cr["category"])
                             denom = int(weights[categories == cr["category"]].sum())
-                        covered_mask |= mask
                         cov = int(weights[mask].sum())
                         rule_rows.append({
                             "Radius": f"{cr['radius_m']}m",
@@ -315,23 +313,11 @@ def main():
                             "Total": f"{denom:,}",
                             "Coverage %": round(cov / denom * 100, 2) if denom > 0 else 0,
                         })
-                    total_covered = int(weights[covered_mask].sum())
-                    not_covered = total_w - total_covered
-                    rule_rows.append({
-                        "Radius": "COMBINED",
-                        "Category": "All",
-                        "Covered": f"{total_covered:,}",
-                        "Total": f"{total_w:,}",
-                        "Coverage %": round(total_covered / total_w * 100, 2),
-                    })
 
                     elapsed = time.time() - t0
                     st.success(f"Done in {elapsed:.1f}s")
                     st.markdown("### Coverage")
                     st.dataframe(pd.DataFrame(rule_rows), use_container_width=True, hide_index=True)
-                    mc1, mc2 = st.columns(2)
-                    mc1.metric("Coverage %", f"{total_covered/total_w*100:.1f}%")
-                    mc2.metric("Not Covered", f"{not_covered:,} ({not_covered/total_w*100:.1f}%)")
                     st.download_button("📥 Download Results (Excel)",
                         data=make_excel({"Coverage": pd.DataFrame(rule_rows)}),
                         file_name=f"coverage_{country}.xlsx",
@@ -428,7 +414,6 @@ def main():
                     # Coverage per rule (SAME logic as Coverage tool — full grid)
                     st.markdown("### Coverage")
                     rule_rows = []
-                    covered_mask_full = np.zeros(len(grid_df), dtype=bool)
                     for cr in criteria:
                         r_km = cr["radius_m"] / 1000.0
                         cat_label = cr["category"] if cr["category"] else "All"
@@ -438,7 +423,6 @@ def main():
                         else:
                             mask = (all_km_full <= r_km) & (cats_full == cr["category"])
                             denom = int(weights_full[cats_full == cr["category"]].sum())
-                        covered_mask_full |= mask
                         cov = int(weights_full[mask].sum())
                         rule_rows.append({
                             "Radius": f"{cr['radius_m']}m",
@@ -447,14 +431,6 @@ def main():
                             "Total": f"{denom:,}",
                             "Coverage %": round(cov / denom * 100, 2) if denom > 0 else 0,
                         })
-                    total_covered_full = int(weights_full[covered_mask_full].sum())
-                    rule_rows.append({
-                        "Radius": "COMBINED",
-                        "Category": "All",
-                        "Covered": f"{total_covered_full:,}",
-                        "Total": f"{total_full:,}",
-                        "Coverage %": round(total_covered_full / total_full * 100, 2),
-                    })
                     st.dataframe(pd.DataFrame(rule_rows), use_container_width=True, hide_index=True)
 
                     st.markdown("### Rationalization")
