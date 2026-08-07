@@ -207,6 +207,124 @@ def make_excel(sheets_dict):
     return buf.getvalue()
 
 
+def build_hotspots(grid_df, dist_km, cell_radius_km, weights, n=100):
+    """Find top N uncovered hotspot zones (aggregated to ~2km resolution)."""
+    uncovered = dist_km > cell_radius_km
+    if not uncovered.any():
+        return pd.DataFrame()
+    unc_df = grid_df.iloc[np.where(uncovered)[0]].copy()
+    unc_df["weight"] = weights[uncovered]
+    # Aggregate to ~2km grid
+    unc_df["lat_r"] = (unc_df["lat"] * 50).round() / 50
+    unc_df["lon_r"] = (unc_df["lon"] * 50).round() / 50
+    hotspots = unc_df.groupby(["lat_r", "lon_r"]).agg(
+        lat=("lat", "mean"), lon=("lon", "mean"), customers=("weight", "sum")
+    ).reset_index(drop=True)
+    hotspots = hotspots.nlargest(n, "customers").reset_index(drop=True)
+    return hotspots
+
+
+def show_map_coverage(stores, grid_df, dist_km, cell_radius_km, weights, country):
+    """Map for Coverage model: stores (blue) + uncovered hotspots (red)."""
+    hotspots = build_hotspots(grid_df, dist_km, cell_radius_km, weights)
+    fig = go.Figure()
+    fig.add_trace(go.Scattermapbox(
+        lat=stores["lat"], lon=stores["lon"],
+        mode="markers", marker=dict(size=4, color="#1f77b4"),
+        name="Stores", hoverinfo="skip",
+    ))
+    if not hotspots.empty:
+        fig.add_trace(go.Scattermapbox(
+            lat=hotspots["lat"], lon=hotspots["lon"],
+            mode="markers",
+            marker=dict(size=hotspots["customers"] / hotspots["customers"].max() * 20 + 5,
+                        color="red", opacity=0.6),
+            name="Uncovered hotspots",
+            text=[f"{int(c):,} customers" for c in hotspots["customers"]],
+            hoverinfo="text",
+        ))
+    center = COUNTRY_CENTERS.get(country, [46.5, 2.0])
+    fig.update_layout(
+        mapbox=dict(style="open-street-map", center=dict(lat=center[0], lon=center[1]), zoom=5),
+        margin=dict(l=0, r=0, t=0, b=0), height=500, showlegend=True,
+        legend=dict(x=0, y=1, bgcolor="rgba(255,255,255,0.8)"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_map_rationalize(stores, essential_stores, country):
+    """Map for Rationalize: green = essential, red = removable."""
+    n_stores = len(stores)
+    colors = ["green" if i in essential_stores else "red" for i in range(n_stores)]
+    labels = ["Essential" if i in essential_stores else "Removable" for i in range(n_stores)]
+    fig = go.Figure()
+    # Essential
+    ess_mask = [i in essential_stores for i in range(n_stores)]
+    rem_mask = [i not in essential_stores for i in range(n_stores)]
+    ess_df = stores.iloc[ess_mask]
+    rem_df = stores.iloc[rem_mask]
+    fig.add_trace(go.Scattermapbox(
+        lat=ess_df["lat"], lon=ess_df["lon"],
+        mode="markers", marker=dict(size=4, color="green"),
+        name=f"Essential ({len(ess_df):,})", hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scattermapbox(
+        lat=rem_df["lat"], lon=rem_df["lon"],
+        mode="markers", marker=dict(size=5, color="red", opacity=0.7),
+        name=f"Removable ({len(rem_df):,})", hoverinfo="skip",
+    ))
+    center = COUNTRY_CENTERS.get(country, [46.5, 2.0])
+    fig.update_layout(
+        mapbox=dict(style="open-street-map", center=dict(lat=center[0], lon=center[1]), zoom=5),
+        margin=dict(l=0, r=0, t=0, b=0), height=500, showlegend=True,
+        legend=dict(x=0, y=1, bgcolor="rgba(255,255,255,0.8)"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_map_candidates(current, candidates, country):
+    """Map for Rank Candidates: current (grey) + candidates (green)."""
+    fig = go.Figure()
+    fig.add_trace(go.Scattermapbox(
+        lat=current["lat"], lon=current["lon"],
+        mode="markers", marker=dict(size=4, color="grey", opacity=0.5),
+        name=f"Current ({len(current):,})", hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scattermapbox(
+        lat=candidates["lat"], lon=candidates["lon"],
+        mode="markers", marker=dict(size=6, color="green"),
+        name=f"Candidates ({len(candidates):,})", hoverinfo="skip",
+    ))
+    center = COUNTRY_CENTERS.get(country, [46.5, 2.0])
+    fig.update_layout(
+        mapbox=dict(style="open-street-map", center=dict(lat=center[0], lon=center[1]), zoom=5),
+        margin=dict(l=0, r=0, t=0, b=0), height=500, showlegend=True,
+        legend=dict(x=0, y=1, bgcolor="rgba(255,255,255,0.8)"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_map_rollout(phases_stores, country):
+    """Map for Rollout: baseline (grey) + each list in different color."""
+    colors = ["grey", "#1f77b4", "#ff7f0e", "#2ca02c"]
+    fig = go.Figure()
+    for i, (name, df) in enumerate(phases_stores):
+        fig.add_trace(go.Scattermapbox(
+            lat=df["lat"], lon=df["lon"],
+            mode="markers", marker=dict(size=4 if i == 0 else 6,
+                                        color=colors[i % len(colors)],
+                                        opacity=0.5 if i == 0 else 0.8),
+            name=f"{name} ({len(df):,})", hoverinfo="skip",
+        ))
+    center = COUNTRY_CENTERS.get(country, [46.5, 2.0])
+    fig.update_layout(
+        mapbox=dict(style="open-street-map", center=dict(lat=center[0], lon=center[1]), zoom=5),
+        margin=dict(l=0, r=0, t=0, b=0), height=500, showlegend=True,
+        legend=dict(x=0, y=1, bgcolor="rgba(255,255,255,0.8)"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def coverage_rules_widget(key_prefix):
     """Show coverage rules (radius + category). Returns list of criteria and radii."""
     st.markdown("**Coverage rules**")
@@ -325,6 +443,18 @@ def main():
                         data=make_excel({"Coverage": pd.DataFrame(rule_rows)}),
                         file_name=f"coverage_{country}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                    # Map button
+                    if st.button("🗺️ Show Map", key="a1_map"):
+                        cell_radius_km = np.zeros(len(grid_df), np.float64)
+                        for cr in criteria:
+                            r_km = cr["radius_m"] / 1000.0
+                            if cr["category"] is None:
+                                cell_radius_km = np.maximum(cell_radius_km, r_km)
+                            else:
+                                m = grid_df["category"].to_numpy() == cr["category"]
+                                cell_radius_km[m] = np.maximum(cell_radius_km[m], r_km)
+                        show_map_coverage(stores, grid_df, dist_km, cell_radius_km, weights, country)
 
 
     # ═══════════ ANALYSIS 2: RATIONALIZE ═══════════
@@ -473,6 +603,10 @@ def main():
                         file_name=f"rationalize_{country}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+                    # Map button
+                    if st.button("🗺️ Show Map", key="a5_map"):
+                        show_map_rationalize(stores, essential_stores, country)
+
 
     # ═══════════ ANALYSIS 3: BEST STORES TO ADD ═══════════
     elif "best stores to add" in analysis:
@@ -546,6 +680,10 @@ def main():
                         file_name=f"candidates_ranked_{country}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+                    # Map button
+                    if st.button("🗺️ Show Map", key="a2_map"):
+                        show_map_candidates(current, candidates, country)
+
 
     # ═══════════ ANALYSIS 4: PRIORITIZED ROLLOUT ═══════════
     elif "prioritized rollout" in analysis:
@@ -590,14 +728,18 @@ def main():
 
                     # Compute coverage for each phase
                     phases = [("Baseline", baseline)]
+                    phase_only_stores = [("Baseline", baseline)]
                     if list1 is not None:
                         phases.append(("+ List 1", pd.concat([baseline, list1], ignore_index=True)))
+                        phase_only_stores.append(("List 1", list1))
                     if list2 is not None:
                         prev = phases[-1][1]
                         phases.append(("+ List 2", pd.concat([prev, list2], ignore_index=True)))
+                        phase_only_stores.append(("List 2", list2))
                     if list3 is not None:
                         prev = phases[-1][1]
                         phases.append(("+ List 3", pd.concat([prev, list3], ignore_index=True)))
+                        phase_only_stores.append(("List 3", list3))
 
                     summary = []
                     for phase_name, phase_stores in phases:
@@ -624,6 +766,10 @@ def main():
                         data=make_excel({"Rollout": summary_df}),
                         file_name=f"rollout_{country}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                    # Map button
+                    if st.button("🗺️ Show Map", key="a3_map"):
+                        show_map_rollout(phase_only_stores, country)
 
 
     # ═══════════ ANALYSIS 5: MAXIMIZE OPTIONS ═══════════
