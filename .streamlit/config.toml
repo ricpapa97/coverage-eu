@@ -1,9 +1,9 @@
 [server]
-maxUploadSize = 200
-maxMessageSize = 200
+maxUploadSize = 50
+enableXsrfProtection = false
 
-[theme]
-primaryColor = "#0066FF"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F7F8FA"
-textColor = "#1A1A2E"
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = true

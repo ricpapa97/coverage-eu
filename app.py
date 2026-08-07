@@ -18,6 +18,12 @@ st.set_page_config(page_title="WWRR Coverage EU", page_icon="🗺️", layout="w
 EARTH_RADIUS_KM = 6371.0
 DEFAULT_RADII_M = [300, 500, 1000, 3000, 5000, 10000]
 FINE_GRID_M = 50
+
+
+@st.cache_data(show_spinner=False)
+def load_grid_cached(path):
+    """Load and cache grid parquet — survives app sleep."""
+    return pd.read_parquet(path)
 DEG_PER_M_LAT = 1.0 / 111_320.0
 FINE_GRID_DEG_LAT = FINE_GRID_M * DEG_PER_M_LAT
 
@@ -248,11 +254,8 @@ def main():
 
     # Load grid
     cache_key = f"grid_{country}"
-    if "grid_df" not in st.session_state or st.session_state.get("cache_key") != cache_key:
-        with st.spinner(f"Loading {COUNTRY_NAMES.get(country, country)}..."):
-            st.session_state["grid_df"] = pd.read_parquet(COUNTRIES[country])
-            st.session_state["cache_key"] = cache_key
-    grid_df = st.session_state["grid_df"]
+    with st.spinner(f"Loading {COUNTRY_NAMES.get(country, country)}..."):
+        grid_df = load_grid_cached(COUNTRIES[country])
     total_w = int(grid_df["weight"].sum())
 
     # Stats
